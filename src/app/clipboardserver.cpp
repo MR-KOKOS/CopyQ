@@ -558,7 +558,11 @@ void ClipboardServer::setPreventScreenCapture(bool prevent)
 
     m_preventScreenCapture = prevent;
     for (QWindow *window : qApp->allWindows()) {
-        ::setPreventScreenCapture(window, m_preventScreenCapture);
+        // Calling SetWindowDisplayAffinity() on a hidden top-level HWND causes
+        // Windows 11 DWM (especially in RDP) to render a blank ghost window.
+        // Hidden windows are updated when shown in eventFilter(QEvent::Show).
+        if (window->isTopLevel() && window->isVisible())
+            ::setPreventScreenCapture(window, m_preventScreenCapture);
     }
 }
 
@@ -776,10 +780,14 @@ bool ClipboardServer::eventFilter(QObject *object, QEvent *ev)
             COPYQ_LOG("Got theme change event");
         QPixmapCache::clear();
         m_updateThemeTimer.start();
-    } else if (m_preventScreenCapture && type == QEvent::Show) {
+    } else if (type == QEvent::Show && platformNativeInterface()->canPreventScreenCapture()) {
         auto widget = qobject_cast<QWidget*>(object);
-        if (widget && widget->windowHandle())
+        if (widget && widget->isWindow()
+            && !widget->testAttribute(Qt::WA_DontShowOnScreen)
+            && widget->windowHandle())
+        {
             ::setPreventScreenCapture(widget->windowHandle(), m_preventScreenCapture);
+        }
     }
 
     return false;
